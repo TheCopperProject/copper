@@ -1,4 +1,3 @@
-// emit.cpp
 #include "emit.hpp"
 #include <llvm/MC/TargetRegistry.h>
 #include <llvm/Target/TargetMachine.h>

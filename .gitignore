@@ -5,3 +5,5 @@ build.bat
 build
 .cache
 .vscode
+test.0.o
+out.exe

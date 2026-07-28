@@ -8,85 +8,93 @@
 #include <string>
 #include <unordered_map>
 
-class Sema
-{
+class Sema {
 public:
-    Sema(ArenaAllocator &arena, ErrorCollector &errors);
+    Sema(ArenaAllocator& arena, ErrorCollector& errors);
 
-    void analyze(SourceFile *file);
+    void analyze(SourceFile* file);
 
 private:
     bool isGlobal;
 
-    ArenaAllocator &arena_;
-    ErrorCollector &errors_;
+    ArenaAllocator& arena_;
+    ErrorCollector& errors_;
     SymbolTable symbols_;
 
-    std::unordered_map<std::string, Stmt *> types_;
-    std::unordered_map<TypeKind, Type *> primitive_cache_;
+    std::unordered_map<std::string, Stmt*> types_;
+    std::unordered_map<TypeKind, Type*> primitive_cache_;
 
-    Type *current_return_type_ = nullptr;
+    bool inferring_return_ = false;
+    std::vector<Type*> inferred_return_types_;
+    std::vector<Stmt*> inferred_return_stmts_;
+    bool inferred_has_void_ = false;
+
+    Type* current_return_type_ = nullptr;
     std::string current_function_name_;
     int loop_depth_ = 0;
     int switch_depth_ = 0;
 
-    void collectTypes(SourceFile *file);
-    void validateTypeBodies(SourceFile *file);
-    void collectSignatures(SourceFile *file);
-    void checkTopLevelBodies(SourceFile *file);
-    Type* inferReturnType(Stmt *body, bool &hasReturn);
-    void collectReturnTypes(Stmt *s, std::vector<Type *> &types, bool &hasVoid);
+    void collectTypes(SourceFile* file);
+    void validateTypeBodies(SourceFile* file);
+    void collectSignatures(SourceFile* file);
+    void checkTopLevelBodies(SourceFile* file);
+    Type* inferReturnType(Stmt* body, bool& hasReturn);
+    void collectReturnTypes(Stmt* s, std::vector<Type*>& types, bool& hasVoid);
 
-    void checkFuncBody(Stmt *decl);
-    void checkGlobalVarInit(Stmt *decl);
+    void checkFuncBody(Stmt* decl);
+    void checkGlobalVarInit(Stmt* decl);
 
-    void checkStmt(Stmt *s);
-    void checkBlock(Stmt *s);
-    void checkVarDecl(Stmt *s);
-    void checkIf(Stmt *s);
-    void checkWhile(Stmt *s);
-    void checkDoWhile(Stmt *s);
-    void checkFor(Stmt *s);
-    void checkSwitch(Stmt *s);
-    void checkReturn(Stmt *s);
+    void checkStmt(Stmt* s);
+    void checkBlock(Stmt* s);
+    void checkVarDecl(Stmt* s);
+    void checkIf(Stmt* s);
+    void checkWhile(Stmt* s);
+    void checkDoWhile(Stmt* s);
+    void checkFor(Stmt* s);
+    void checkSwitch(Stmt* s);
+    void checkReturn(Stmt* s);
 
-    Type *checkExpr(Expr *e);
-    Type *checkBinary(Expr *e);
-    Type *checkUnary(Expr *e);
-    Type *checkAssign(Expr *e);
-    Type *checkCall(Expr *e);
-    bool isFormattable(Type *t);
-    Type *checkIndex(Expr *e);
-    Type *checkMember(Expr *e);
-    Type *checkCast(Expr *e);
-    Type *checkSizeof(Expr *e);
-    Type *checkTernary(Expr *e);
-    Type *checkIncDec(TokenKind op, Expr *operand, Span span);
-    Type *checkLiteralArray(Expr *e);
+    Type* checkExpr(Expr* e);
+    Type* checkBinary(Expr* e);
+    Type* checkUnary(Expr* e);
+    Type* checkAssign(Expr* e);
+    Type* checkCall(Expr* e);
+    bool isFormattable(Type* t);
+    Type* checkIndex(Expr* e);
+    Type* checkMember(Expr* e);
+    Type* checkCast(Expr* e);
+    Type* checkSizeof(Expr* e);
+    Type* checkTernary(Expr* e);
+    Type* checkIncDec(TokenKind op, Expr* operand, Span span);
+    Type* checkLiteralArray(Expr* e);
 
-    bool stmtAlwaysReturns(Stmt *s);
+    bool stmtAlwaysReturns(Stmt* s);
 
-    Type *resolveType(Type *t);
-    Type *getPrimitive(TypeKind kind);
+    Type* resolveType(Type* t);
+    Type* getPrimitive(TypeKind kind);
 
-    bool typesEqual(Type *a, Type *b);
-    Type *promoteNumeric(Type *a, Type *b, bool &ok);
-    bool isAssignable(Type *from, Type *to);
-    bool isValidCast(Type *from, Type *to);
+    void coerceToType(Expr* e, Type* target);
+    bool isConstantType(Type* t);
+    bool literalIntFits(int64_t value, TypeKind kind);
 
-    bool isIntegerType(Type *t);
-    bool isFloatType(Type *t);
-    bool isNumericType(Type *t);
-    bool isUnsignedType(Type *t);
-    bool isBoolType(Type *t);
-    bool isScalarType(Type *t);
+    bool typesEqual(Type* a, Type* b);
+    Type* promoteNumeric(Type* a, Type* b, bool& ok);
+    bool isAssignable(Type* from, Type* to);
+    bool isValidCast(Type* from, Type* to);
+
+    bool isIntegerType(Type* t);
+    bool isFloatType(Type* t);
+    bool isNumericType(Type* t);
+    bool isUnsignedType(Type* t);
+    bool isBoolType(Type* t);
+    bool isScalarType(Type* t);
     int bitWidth(TypeKind k);
 
-    bool isLValue(Expr *e);
-    bool checkAssignableTarget(Expr *target);
+    bool isLValue(Expr* e);
+    bool checkAssignableTarget(Expr* target);
 
-    std::string typeToString(Type *t);
+    std::string typeToString(Type* t);
     std::string opName(TokenKind k);
 
-    void error(const std::string &message, const Span &span);
+    void error(const std::string& message, const Span& span);
 };
