@@ -1,0 +1,7 @@
+.clangd
+.clang-format
+test.jc
+build.bat
+build
+.cache
+.vscode
