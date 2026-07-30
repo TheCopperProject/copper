@@ -1,5 +1,6 @@
 #include "sema.hpp"
 #include <unordered_set>
+#include "ast.hpp"
 
 Sema::Sema(ArenaAllocator& arena, ErrorCollector& errors)
     : arena_(arena), errors_(errors), isGlobal(true) {}
@@ -596,13 +597,19 @@ bool Sema::isAssignable(Type* from, Type* to) {
         return false;
     }
 
+    if (from->kind == TypeKind::ARRAY && to->kind == TypeKind::POINTER) {
+        if (to->wrapper.inner && to->wrapper.inner->kind == TypeKind::VOID)
+            return true;
+        return typesEqual(from->array.element, to->wrapper.inner);
+    }
+
     if (to->kind == TypeKind::OPTIONAL)
         return isAssignable(from, to->wrapper.inner) ||
                (from->kind == TypeKind::OPTIONAL &&
                 isAssignable(from->wrapper.inner, to->wrapper.inner));
 
     if (from->kind == TypeKind::ARRAY && to->kind == TypeKind::ARRAY)
-        return from->array.size == to->array.size &&
+        return from->array.size <= to->array.size &&
                isAssignable(from->array.element, to->array.element);
 
     if (from->kind == TypeKind::ARRAY && to->kind == TypeKind::SLICE)
@@ -1118,7 +1125,6 @@ void Sema::checkStmt(Stmt* s) {
             checkVarDecl(s);
             break;
 
-        case StmtKind::IMPORT_DECL:
         case StmtKind::STRUCT_DECL:
         case StmtKind::UNION_DECL:
         case StmtKind::ENUM_DECL:
@@ -1405,6 +1411,8 @@ Type* Sema::checkExpr(Expr* e) {
 
         case ExprKind::LITERAL_ARRAY:
             return checkLiteralArray(e);
+        case ExprKind::LITERAL_STRUCT:
+            return checkLiteralStruct(e);
 
         case ExprKind::IDENTIFIER: {
             std::string name(e->identifier.name);
@@ -1453,11 +1461,11 @@ Type* Sema::checkExpr(Expr* e) {
             return checkTernary(e);
 
         case ExprKind::PRE_INC_DEC:
-            return checkIncDec(e->pre_inc_dec.op, e->pre_inc_dec.operand,
+            return checkIncDec(e, e->pre_inc_dec.op, e->pre_inc_dec.operand,
                                e->span);
 
         case ExprKind::POST_INC_DEC:
-            return checkIncDec(e->post_inc_dec.op, e->post_inc_dec.operand,
+            return checkIncDec(e, e->post_inc_dec.op, e->post_inc_dec.operand,
                                e->span);
 
         default:
@@ -1496,6 +1504,72 @@ Type* Sema::checkLiteralArray(Expr* e) {
                                     e->literal_array.value_count, e->span);
     e->resolved_type = arrType;
     return arrType;
+}
+
+Type* Sema::checkLiteralStruct(Expr* e) {
+    Type* target = resolveType(e->literal_struct.target);
+    if (!target || target->kind != TypeKind::NAMED) {
+        for (uint32_t i = 0; i < e->literal_struct.field_count; i++)
+            checkExpr(e->literal_struct.fields[i].default_value);
+        return target;
+    }
+
+    std::string typeName(target->named.name);
+    auto it = types_.find(typeName);
+    if (it == types_.end())
+        return nullptr;
+
+    Stmt* decl = it->second;
+    if (decl->kind != StmtKind::STRUCT_DECL &&
+        decl->kind != StmtKind::UNION_DECL) {
+        error("type '" + typeName +
+                  "' is not a struct or union and cannot be used in a struct "
+                  "literal",
+              e->span);
+        return nullptr;
+    }
+
+    std::unordered_set<std::string> seen;
+
+    for (uint32_t i = 0; i < e->literal_struct.field_count; i++) {
+        Field& lf = e->literal_struct.fields[i];
+        std::string fieldName(lf.name);
+
+        Field* declField = nullptr;
+        for (uint32_t f = 0; f < decl->struct_union_decl.field_count; f++) {
+            if (decl->struct_union_decl.fields[f].name == lf.name) {
+                declField = &decl->struct_union_decl.fields[f];
+                break;
+            }
+        }
+
+        Type* valType = checkExpr(lf.default_value);
+
+        if (!declField) {
+            error("'" + typeName + "' has no member named '" + fieldName + "'",
+                  lf.span);
+            continue;
+        }
+
+        if (seen.count(fieldName))
+            error("duplicate initializer for field '" + fieldName +
+                      "' in struct literal",
+                  lf.span);
+        seen.insert(fieldName);
+
+        if (valType && declField->type &&
+            !isAssignable(valType, declField->type))
+            error("field '" + fieldName + "' has type '" +
+                      typeToString(declField->type) +
+                      "' but initializer has type '" + typeToString(valType) +
+                      "'",
+                  lf.default_value ? lf.default_value->span : lf.span);
+        else if (valType && declField->type)
+            coerceToType(lf.default_value, declField->type);
+    }
+
+    e->resolved_type = target;
+    return target;
 }
 
 Type* Sema::checkBinary(Expr* e) {
@@ -1934,10 +2008,33 @@ Type* Sema::checkCast(Expr* e) {
 }
 
 Type* Sema::checkSizeof(Expr* e) {
-    if (e->size_of.is_type)
+    if (e->size_of.is_type) {
         resolveType(e->size_of.type);
-    else
-        checkExpr(e->size_of.expr);
+    } else {
+        Expr* inner = e->size_of.expr;
+
+        // `sizeof(Nombre)` es ambiguo en la gramática: puede ser el tamaño
+        // de una expresión llamada Nombre o el tamaño del tipo Nombre. El
+        // parser no sabe distinguirlos (eso es trabajo de Sema), así que
+        // siempre llega como is_type = false con un IDENTIFIER adentro.
+        // Si no existe un símbolo de valor con ese nombre pero sí un tipo,
+        // reinterpretamos el nodo como sizeof de tipo.
+        if (inner && inner->kind == ExprKind::IDENTIFIER) {
+            std::string name(inner->identifier.name);
+            if (!symbols_.lookup(name) && types_.count(name)) {
+                Type* named = Type::makeNamed(arena_, inner->identifier.name,
+                                              inner->span);
+                e->size_of.is_type = true;
+                e->size_of.type = named;
+                e->size_of.expr = nullptr;
+                resolveType(named);
+            } else {
+                checkExpr(inner);
+            }
+        } else {
+            checkExpr(inner);
+        }
+    }
 
     e->resolved_type = getPrimitive(TypeKind::U64);
     return e->resolved_type;
@@ -1988,7 +2085,7 @@ Type* Sema::checkTernary(Expr* e) {
     return nullptr;
 }
 
-Type* Sema::checkIncDec(TokenKind op, Expr* operand, Span span) {
+Type* Sema::checkIncDec(Expr* e, TokenKind op, Expr* operand, Span span) {
     Type* t = checkExpr(operand);
     if (!t)
         return nullptr;
@@ -2004,5 +2101,7 @@ Type* Sema::checkIncDec(TokenKind op, Expr* operand, Span span) {
             span);
 
     operand->resolved_type = t;
+
+    e->resolved_type = t;
     return t;
 }

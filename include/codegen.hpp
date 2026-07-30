@@ -19,8 +19,15 @@
 #include "errors.hpp"
 #include "token.hpp"
 
+struct StructInfo {
+    llvm::StructType* llvmType;
+    std::unordered_map<std::string_view, unsigned> fieldIndices;
+};
+
 class Codegen {
 private:
+    llvm::Function* curFunc;
+
     llvm::Type* i8ty;
     llvm::Type* i16ty;
     llvm::Type* i32ty;
@@ -37,18 +44,20 @@ private:
     ErrorCollector& error;
     std::string_view name;
 
-    std::unordered_map<std::string_view, llvm::StructType*> topLevelStructs;
+    std::unordered_map<std::string_view, StructInfo> topLevelStructs;
     std::vector<std::unordered_map<std::string_view, llvm::Value*>> scopes;
-    
-    std::unordered_map<std::string_view, llvm::GlobalVariable*> globals;
 
     llvm::Type* typeConvertion(Type* type, Span* span);
 
     llvm::Value* genTopLevel(Stmt* stmt);
     llvm::Value* genStmt(Stmt* stmt);
     llvm::Value* genExpr(Expr* expr);
+    llvm::Value* genAddr(Expr* expr);
 
     llvm::Value* genBinop(Expr* e, Expr* l, Expr* r, TokenKind op);
+    llvm::Value* genCast(Expr* expr);
+    llvm::Value* genSizeof(Expr* expr);
+    llvm::Value* genIncDec(Expr* operand, TokenKind op, bool isPrefix);
 
     llvm::Function* declareFunction(Stmt* stmt);
 

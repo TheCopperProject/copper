@@ -1,212 +1,230 @@
-#include "lexer.hpp"
-#include "parser.hpp"
-#include "ast_printer.hpp"
-#include "errors.hpp"
-#include "arena.hpp"
-#include "sema.hpp"
-#include "emit.hpp"
-#include "codegen.hpp"
-#include "link.hpp"
-
-#include <llvm/Support/TargetSelect.h>
-#include <llvm/Support/raw_ostream.h>
-#include <llvm/Support/FileSystem.h>
-#include <llvm/TargetParser/Host.h>
-
+#define TOML_EXCEPTIONS 0
+#include <toml.hpp>
+#include <filesystem>
+#include <format>
+#include <string>
 #include <iostream>
 #include <fstream>
-#include <sstream>
-#include <string>
+#include <optional>
 #include <vector>
-#include <memory>
-#include <filesystem>
 
 namespace fs = std::filesystem;
 
-static bool readFile(const std::string& path, std::string& out) {
-    std::ifstream file(path, std::ios::in | std::ios::binary);
-    if (!file.is_open())
-        return false;
-
-    std::ostringstream ss;
-    ss << file.rdbuf();
-    out = ss.str();
-    return true;
-}
-
-struct CompilationUnit {
-    std::string path;
-    std::unique_ptr<ArenaAllocator> arena;
-    std::unique_ptr<ErrorCollector> errors;
-    std::unique_ptr<Codegen> codegen;
-    std::string objPath;
+struct CommandInfo {
+    std::string name;
+    std::string description;
 };
 
-struct Options {
-    std::vector<std::string> inputs;
-    std::string outExe = "out.exe";
-    std::string triple;
-    bool emitLLVMIR = false;
-    bool printAst = false;
+struct ProjectConfig {
+    std::string name;
+    std::string version;
+    std::string type;
+    std::string sourceDir;
+    std::string buildDir;
+    std::string entryRoot;
 };
 
-static void printUsage(const char* argv0) {
-    std::cerr << "uso: " << argv0
-              << " <archivo1.jc> [archivo2.jc ...] -o <salida.exe> "
-              << "[--target=<triple>] [--emit-llvm-ir] [--print-ast]\n";
+static std::string main_template =
+    R"(func main(argc: i32, argv: char**) -> i32 {
+    return 0;
+})";
+
+static std::string path;
+
+static std::vector<CommandInfo> commands = {
+    {"help", "Prints information about available commands."},
+    {"init", "Initializes a new project in the current directory."},
+    {"build", "Compiles the project and generates executables or libraries."},
+    {"run", "Executes the project."},
+    {"check", "Checks the code for errors without compiling binary artifacts."},
+    {"clean", "Clears build artifacts and temporary files."},
+    {"fmt", "Formats the source code according to standard rules."}};
+
+static void printDefault() {
+    std::cerr << "Usage: " << path << " <command> [arguments]\n";
+    std::cerr << "Type '" << path << " help' for a list of commands.\n";
 }
 
-static bool parseArgs(int argc, char** argv, Options& opts) {
-    for (int i = 1; i < argc; i++) {
-        std::string arg = argv[i];
+static std::optional<ProjectConfig> loadConfig(
+    const std::string& configPath = "copper.toml") {
+    if (!fs::exists(configPath)) {
+        std::cerr << "Error: The configuration file \"" << configPath
+                  << "\" was not found.\n";
+        return std::nullopt;
+    }
 
-        if (arg == "-o") {
-            if (i + 1 >= argc) {
-                std::cerr << "error: '-o' requiere un argumento\n";
-                return false;
-            }
-            opts.outExe = argv[++i];
-        } else if (arg.rfind("--target=", 0) == 0) {
-            opts.triple = arg.substr(std::string("--target=").size());
-        } else if (arg == "--emit-llvm-ir") {
-            opts.emitLLVMIR = true;
-        } else if (arg == "--print-ast") {
-            opts.printAst = true;
-        } else if (arg == "-h" || arg == "--help") {
-            printUsage(argv[0]);
-            return false;
+    toml::parse_result result = toml::parse_file(configPath);
+    if (!result) {
+        std::cerr << "Error: Parsing " << configPath << " failed:\n"
+                  << result.error() << "\n";
+        return std::nullopt;
+    }
+
+    toml::table& config = result.table();
+    ProjectConfig cfg;
+    bool valid = true;
+
+    if (auto v = config["project"]["name"].value<std::string>())
+        cfg.name = *v;
+    else {
+        std::cerr
+            << "Error: Missing or invalid required field \"project.name\" in "
+            << configPath << ".\n";
+        valid = false;
+    }
+
+    if (auto v = config["project"]["version"].value<std::string>())
+        cfg.version = *v;
+    else {
+        std::cerr << "Error: Missing or invalid required field "
+                     "\"project.version\" in "
+                  << configPath << ".\n";
+        valid = false;
+    }
+
+    if (auto v = config["project"]["type"].value<std::string>()) {
+        if (*v != "bin" && *v != "static_lib" && *v != "dynamic_lib") {
+            std::cerr << "Error: \"project.type\" must be one of \"bin\", "
+                         "\"static_lib\", \"dynamic_lib\" (got \""
+                      << *v << "\") in " << configPath << ".\n";
+            valid = false;
         } else {
-            opts.inputs.push_back(arg);
+            cfg.type = *v;
         }
+    } else {
+        std::cerr
+            << "Error: Missing or invalid required field \"project.type\" in "
+            << configPath << ".\n";
+        valid = false;
     }
 
-    if (opts.inputs.empty() && argc == 1) {
-        opts.inputs.push_back("test.jc");
+    if (auto v = config["directories"]["source"].value<std::string>())
+        cfg.sourceDir = *v;
+    else {
+        std::cerr << "Error: Missing or invalid required field "
+                     "\"directories.source\" in "
+                  << configPath << ".\n";
+        valid = false;
     }
 
-    return true;
+    if (auto v = config["directories"]["build"].value<std::string>())
+        cfg.buildDir = *v;
+    else {
+        std::cerr << "Error: Missing or invalid required field "
+                     "\"directories.build\" in "
+                  << configPath << ".\n";
+        valid = false;
+    }
+
+    if (auto v = config["entry"]["root"].value<std::string>())
+        cfg.entryRoot = *v;
+    else {
+        std::cerr
+            << "Error: Missing or invalid required field \"entry.root\" in "
+            << configPath << ".\n";
+        valid = false;
+    }
+
+    if (!valid)
+        return std::nullopt;
+    return cfg;
 }
 
 int main(int argc, char** argv) {
-    llvm::InitializeAllTargetInfos();
-    llvm::InitializeAllTargets();
-    llvm::InitializeAllTargetMCs();
-    llvm::InitializeAllAsmPrinters();
-    llvm::InitializeAllAsmParsers();
-
-    Options opts;
-    if (!parseArgs(argc, argv, opts))
+    if (argc <= 0)
         return 1;
+    path = argv[0];
 
-    if (opts.inputs.empty()) {
-        printUsage(argv[0]);
-        return 1;
+    if (argc <= 1) {
+        printDefault();
+        return 0;
     }
 
-    std::string triple = !opts.triple.empty()
-                             ? opts.triple
-                             : llvm::sys::getDefaultTargetTriple();
-    TargetOS os = targetOSFromTriple(triple);
+    std::string command = argv[1];
 
-    std::vector<std::unique_ptr<CompilationUnit>> units;
-    units.reserve(opts.inputs.size());
-
-    bool anyErrors = false;
-
-    for (const auto& path : opts.inputs) {
-        auto unit = std::make_unique<CompilationUnit>();
-        unit->path = path;
-
-        std::string source;
-        if (!readFile(path, source)) {
-            std::cerr << "No se pudo abrir: " << path << "\n";
-            anyErrors = true;
-            continue;
+    if (command == "help") {
+        std::cout << "Available commands:\n\n";
+        for (const auto& cmd : commands) {
+            std::cout << "  " << cmd.name;
+            if (cmd.name.length() < 8)
+                std::cout << "\t\t";
+            else
+                std::cout << "\t";
+            std::cout << cmd.description << "\n";
         }
-
-        unit->arena = std::make_unique<ArenaAllocator>();
-        unit->errors = std::make_unique<ErrorCollector>(unit->path);
-        unit->codegen = std::make_unique<Codegen>(std::string_view(unit->path),
-                                                  *unit->errors);
-
-        std::vector<Token> tokens =
-            tokenify(unit->path.c_str(), source.c_str(), *unit->arena);
-
-        Parser parser(tokens, *unit->arena, *unit->errors, 0);
-        SourceFile* file = parser.parseSourceFile();
-
-        if (!unit->errors->hasErrors()) {
-            Sema sema(*unit->arena, *unit->errors);
-            sema.analyze(file);
+    } else if (command == "init") {
+        if (argc <= 2) {
+            std::cerr << "Expected " << path << " init {name}";
+            return 0;
         }
+        std::string name = argv[2];
+        static std::string default_toml = std::format(R"([project]
+name = {}
+version = "0.1.0"
+type = "bin" # options are bin, static_lib, dynamic_lib
+[directories]
+source = "src"
+build = "build"
+[entry]
+root = "main"
+[compiler]
+# flags = ["-Wall", "-Wextra"]
+# defines = ["ENABLE_LOGGING=1"]
+[link]
+# libraries = ["sdl2", "openal"] # example linking, links -lsdl2, -lopenal
+# Package dependencies (git modules)
+[dependencies]
+# format = "[www.github.com/JonkIsKindaCool/format](https://www.github.com/JonkIsKindaCool/format)",
+                                                      name);
 
-        if (unit->errors->hasErrors()) {
-            anyErrors = true;
-            std::cout << "--- Diagnostics (" << unit->path << ") ---\n";
-            for (const auto& d : unit->errors->all()) {
-                std::cout << "["
-                          << (d.severity == Severity::ERROR ? "ERROR" : "WARN")
-                          << "] " << unit->errors->src_name << " "
-                          << d.span.start_line << ":" << d.span.start_column
-                          << " - " << d.message << "\n";
-            }
-            units.push_back(std::move(unit));
-            continue;
-        }
+        fs::create_directories(name + "/src");
 
-        if (opts.printAst)
-            std::cout << AstPrinter::print(file) << "\n";
-
-        unit->codegen->generate(file);
-
-        units.push_back(std::move(unit));
-    }
-
-    if (anyErrors)
-        return 1;
-
-    std::vector<std::string> objPaths;
-    objPaths.reserve(units.size());
-
-    fs::path buildDir = fs::path(opts.outExe).parent_path();
-    if (buildDir.empty())
-        buildDir = ".";
-
-    for (size_t i = 0; i < units.size(); i++) {
-        CompilationUnit& unit = *units[i];
-        std::string stem = fs::path(unit.path).stem().string();
-
-        if (opts.emitLLVMIR) {
-            std::string llPath =
-                (buildDir / (stem + "." + std::to_string(i) + ".ll")).string();
-            std::error_code ec;
-            llvm::raw_fd_ostream llOut(llPath, ec, llvm::sys::fs::OF_None);
-            if (ec) {
-                std::cerr << "No se pudo escribir " << llPath << ": "
-                          << ec.message() << "\n";
-                return 1;
-            }
-            unit.codegen->module->print(llOut, nullptr);
-        }
-
-        unit.objPath =
-            (buildDir / (stem + "." + std::to_string(i) + ".o")).string();
-
-        std::string errMsg;
-        if (!emitObjectFile(unit.codegen->module.get(), unit.objPath, triple,
-                            errMsg)) {
-            std::cerr << "Error emitting object (" << unit.path
-                      << "): " << errMsg << "\n";
+        std::ofstream configFile(name + "/copper.toml");
+        if (!configFile.is_open()) {
+            std::cerr << "Error: Could not create the file copper.toml!"
+                      << std::endl;
             return 1;
         }
+        configFile << default_toml << std::endl;
+        configFile.close();
 
-        objPaths.push_back(unit.objPath);
-    }
+        std::ofstream mainFile(name + "/src/main.cop");
+        if (!mainFile.is_open()) {
+            std::cerr << "Error: Could not create the file main.cop!"
+                      << std::endl;
+            return 1;
+        }
+        mainFile << main_template << std::endl;
+        mainFile.close();
 
-    std::string errMsg;
-    if (!linkExecutable(objPaths, opts.outExe, argv[0], os, errMsg)) {
-        std::cerr << "Linking error: " << errMsg << "\n";
-        return 1;
+        std::cout << "Succesfully created project " << name << "!";
+    } else if (command == "build") {
+        std::optional<ProjectConfig> config = loadConfig();
+        if (!config)
+            return 1;
+
+    } else if (command == "run") {
+        std::optional<ProjectConfig> config = loadConfig();
+        if (!config)
+            return 1;
+
+    } else if (command == "check") {
+        std::optional<ProjectConfig> config = loadConfig();
+        if (!config)
+            return 1;
+
+    } else if (command == "clean") {
+        std::optional<ProjectConfig> config = loadConfig();
+        if (!config)
+            return 1;
+
+    } else if (command == "fmt") {
+        std::optional<ProjectConfig> config = loadConfig();
+        if (!config)
+            return 1;
+
+    } else {
+        std::cout << "Use the help command for more info" << "\n";
     }
 
     return 0;

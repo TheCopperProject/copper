@@ -16,25 +16,27 @@ enum class TokenKind
 
     I8_KEYWORD,    // i8
     I16_KEYWORD,   // i16
-    I32_KEYWORD,   // i32 
-    I64_KEYWORD,   // i64 
+    I32_KEYWORD,   // i32
+    I64_KEYWORD,   // i64
 
-    U8_KEYWORD,    // u8   
+    U8_KEYWORD,    // u8
     U16_KEYWORD,   // u16
-    U32_KEYWORD,   // u32  
-    U64_KEYWORD,   // u64  
+    U32_KEYWORD,   // u32
+    U64_KEYWORD,   // u64
 
-    F32_KEYWORD,   // f32 
-    F64_KEYWORD,   // f64   
+    F32_KEYWORD,   // f32
+    F64_KEYWORD,   // f64
 
-    BOOL_KEYWORD,  // bool 
-    CHAR_KEYWORD,  // char  
+    BOOL_KEYWORD,  // bool
+    CHAR_KEYWORD,  // char
     VOID_KEYWORD,  // void
 
-    VAR_KEYWORD,  
+    VAR_KEYWORD,
     CONST_KEYWORD,
 
-    FUNC_KEYWORD, 
+    FUNC_KEYWORD,
+
+    AS_KEYWORD,
 
     BREAK_KEYWORD,
     CASE_KEYWORD,
@@ -58,9 +60,10 @@ enum class TokenKind
     STATIC_KEYWORD,
     VOLATILE_KEYWORD,
 
-    DEFER_KEYWORD, 
-    MATCH_KEYWORD,   
-    IMPORT_KEYWORD, 
+    DEFER_KEYWORD,
+    MATCH_KEYWORD,
+    IMPORT_KEYWORD,
+    PACKAGE_KEYWORD,
 
     PLUS_TOKEN,     // +
     MINUS_TOKEN,    // -
@@ -73,7 +76,7 @@ enum class TokenKind
 
     EQUAL_EQUAL_TOKEN,   // ==
     NOT_EQUAL_TOKEN,     // !=
-    LESS_TOKEN,          // 
+    LESS_TOKEN,          //
     GREATER_TOKEN,       // >
     LESS_EQUAL_TOKEN,    // <=
     GREATER_EQUAL_TOKEN, // >=
@@ -86,7 +89,7 @@ enum class TokenKind
     PIPE_TOKEN,        // |
     CARET_TOKEN,       // ^
     TILDE_TOKEN,       // ~
-    LEFT_SHIFT_TOKEN,  // 
+    LEFT_SHIFT_TOKEN,  //
     RIGHT_SHIFT_TOKEN, // >>
 
     ASSIGN_TOKEN,             // =
@@ -108,11 +111,11 @@ enum class TokenKind
     LEFT_BRACKET_TOKEN,  // [
     RIGHT_BRACKET_TOKEN, // ]
     SEMICOLON_TOKEN,     // ;
-    COLON_TOKEN,         // : 
+    COLON_TOKEN,         // :
     COMMA_TOKEN,         // ,
     DOT_TOKEN,           // .
     ARROW_TOKEN,         // ->
-    QUESTION_TOKEN,      // ?  
+    QUESTION_TOKEN,      // ?
     ELLIPSIS_TOKEN,      // ...
 
     HASH_TOKEN,      // #

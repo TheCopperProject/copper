@@ -9,11 +9,14 @@
 #include <vector>
 #include <cstdint>
 
-class Parser
-{
+class Parser {
 public:
-    Parser(std::vector<Token> tokens, ArenaAllocator& arena, ErrorCollector& errors, uint32_t file_id)
-        : tokens_(std::move(tokens)), arena_(arena), errors_(errors), file_id_(file_id) {}
+    Parser(std::vector<Token> tokens, ArenaAllocator& arena,
+           ErrorCollector& errors, uint32_t file_id)
+        : tokens_(std::move(tokens)),
+          arena_(arena),
+          errors_(errors),
+          file_id_(file_id) {}
 
     SourceFile* parseSourceFile();
 
@@ -33,14 +36,18 @@ private:
     bool isAtEnd() const;
     Span spanFrom(const Token& start) const;
 
-    void synchronize(); 
+    void synchronize();
 
     Stmt* parseTopLevelDecl();
-    Stmt* parseImportDecl();
+
+    PackageDecl* parsePackageDecl();
+    ImportDecl* parseImportDecl();
+
     Stmt* parseFuncDecl(bool is_extern);
     Stmt* parseStructDecl();
     Stmt* parseUnionDecl();
     Stmt* parseEnumDecl();
+
     Field* parseFieldList(TokenKind terminator, uint32_t& out_count);
     Field* parseParamList(uint32_t& out_count, bool* isvariadic);
 

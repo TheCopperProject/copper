@@ -85,7 +85,7 @@ static bool linkWindows(const std::vector<std::string> &objPaths, const std::str
 
     if (!ok)
     {
-        errMsg = errStr.empty() ? "lld-link falló sin mensaje" : errStr;
+        errMsg = errStr.empty() ? "lld-link failed without a message" : errStr;
         return false;
     }
     if (!errStr.empty())

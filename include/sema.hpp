@@ -65,8 +65,9 @@ private:
     Type* checkCast(Expr* e);
     Type* checkSizeof(Expr* e);
     Type* checkTernary(Expr* e);
-    Type* checkIncDec(TokenKind op, Expr* operand, Span span);
+    Type* checkIncDec(Expr* e, TokenKind op, Expr* operand, Span span);
     Type* checkLiteralArray(Expr* e);
+    Type* checkLiteralStruct(Expr* e);
 
     bool stmtAlwaysReturns(Stmt* s);
 
