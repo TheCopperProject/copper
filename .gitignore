@@ -7,3 +7,5 @@ build
 .vscode
 test.0.o
 out.exe
+test
+src/old_main.cpp

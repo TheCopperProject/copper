@@ -1,6 +1,6 @@
 #pragma once
 
-#include "span.hpp"
+#include "ast/span.hpp"
 #include <string>
 #include <vector>
 #include <cstdint>

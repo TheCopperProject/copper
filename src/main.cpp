@@ -159,7 +159,7 @@ int main(int argc, char** argv) {
         }
         std::string name = argv[2];
         static std::string default_toml = std::format(R"([project]
-name = {}
+name = "{}"
 version = "0.1.0"
 type = "bin" # options are bin, static_lib, dynamic_lib
 [directories]
